@@ -1,0 +1,47 @@
+# Environment variables (contains secrets)
+.env
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+
+# Runtime data (keep directory structure via .gitkeep)
+data/tenders/*
+!data/tenders/.gitkeep
+data/awards/*
+!data/awards/.gitkeep
+data/logs/*
+!data/logs/.gitkeep
+data/captcha_images/*
+!data/captcha_images/.gitkeep
+data/analysis/*
+!data/analysis/.gitkeep
+
+# Temporary files
+*.tmp
+*.temp
+
+# Editable install metadata
+*.egg-info/
