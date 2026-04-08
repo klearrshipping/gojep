@@ -108,6 +108,10 @@ BROWSER_HEIGHT = 1080
 GOJEP_USERNAME = _secret_or_env("gojep-username", "GOJEP_USERNAME")
 GOJEP_PASSWORD = _secret_or_env("gojep-password", "GOJEP_PASSWORD")
 
+# RunPod
+RUNPOD_API_KEY     = _secret_or_env("runpod-api-key", "RUNPOD_API_KEY")
+RUNPOD_ENDPOINT_ID = os.getenv("RUNPOD_ENDPOINT_ID", "an87zevcqr1fbk")
+
 # OpenRouter API credentials
 OPENROUTER_API_KEY = _secret_or_env("openrouter-api-key", "OPENROUTER_API_KEY")
 
