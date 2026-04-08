@@ -281,6 +281,7 @@ def _complete_selection_window(driver: Any, wait: WebDriverWait, main_handle: st
 
     # Confirm: Download / OK / Continue / Submit
     confirm_xpaths = (
+        "//button[contains(., 'Proceed without association')]",  # anonymous download page
         "//button[contains(., 'Download')]",
         "//input[@type='button' and contains(@value,'Download')]",
         "//input[@type='submit' and (contains(@value,'Download') or contains(@value,'OK'))]",
@@ -505,10 +506,23 @@ def run_downloads(
                         zip_ref.extractall(extract_dir)
                     logger.info("Extracted %s to %s", dest_zip, extract_dir)
                     row["extracted_dir"] = os.path.join(DOCUMENTS_SUBDIR, safe_name).replace("\\", "/")
-                    
+
                     # Ensure Zip deletion post-extraction
                     os.remove(dest_zip)
                     logger.info("Cleaned up and deleted zip: %s", dest_zip)
+
+                    # Unblock all extracted files — removes Windows Zone.ID (Mark of the Web)
+                    # so WSL/Docling can read them without "Access is denied"
+                    try:
+                        import subprocess
+                        subprocess.run(
+                            ["powershell", "-Command", f"Get-ChildItem -Path '{extract_dir}' -Recurse | Unblock-File"],
+                            capture_output=True, timeout=30
+                        )
+                        logger.info("Unblocked files in %s", extract_dir)
+                    except Exception as ub_err:
+                        logger.warning("Could not unblock files in %s: %s", extract_dir, ub_err)
+
                 except zipfile.BadZipFile:
                     logger.warning("Downloaded file %s is not a valid ZIP file", dest_zip)
                     row["error"] = "bad_zip_file"

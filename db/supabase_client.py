@@ -156,6 +156,7 @@ class SupabaseQuery:
         self.count_option: Optional[str] = None
         self.payload: Optional[Any] = None
         self.on_conflict: Optional[str] = None
+        self.ignore_duplicates: bool = False
         return self
 
     def _add_filter(self, field: str, expression: str):
@@ -207,10 +208,11 @@ class SupabaseQuery:
         self.payload = data
         return self
 
-    def upsert(self, data: Any, on_conflict: Optional[str] = None):
+    def upsert(self, data: Any, on_conflict: Optional[str] = None, ignore_duplicates: bool = False):
         self.operation = "upsert"
         self.payload = data
         self.on_conflict = on_conflict
+        self.ignore_duplicates = ignore_duplicates
         return self
 
     def update(self, data: Dict[str, Any]):
@@ -239,7 +241,8 @@ class SupabaseQuery:
             prefer.append("return=representation")
         elif self.operation == "upsert":
             method = "POST"
-            prefer.extend(["return=representation", "resolution=merge-duplicates"])
+            resolution = "ignore-duplicates" if getattr(self, "ignore_duplicates", False) else "merge-duplicates"
+            prefer.extend(["return=representation", f"resolution={resolution}"])
             if self.on_conflict:
                 params["on_conflict"] = self.on_conflict
         elif self.operation == "update":

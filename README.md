@@ -116,6 +116,45 @@ python -m tools.setup_analysis_table
 python -m tools.check_analysis_table
 ```
 
+## Cloud Extraction (Google Colab)
+
+For faster processing of many documents (PDF/DOCX), you can offload the extraction to Google Colab using GPU acceleration.
+
+### 1. Setup Rclone (For Automatic Syncing)
+We use Rclone to keep your local `data` folder in sync with Google Drive.
+
+1. **Configure Rclone**:
+   Run the following command in your terminal:
+   ```powershell
+   .\tools\rclone\rclone.exe config
+   ```
+   - Follow the prompts to create a **New remote**.
+   - **Name**: `gdrive`
+   - **Type**: `drive` (Google Drive)
+   - Leave `client_id` and `client_secret` blank for now unless you have your own.
+   - **Scope**: `drive.file` (or `drive` for full access).
+   - Follow the browser login prompt to authorize.
+2. **Initial Sync**:
+   Establish the connection between your local `data` folder and the Drive:
+   ```bash
+   python tools/sync_drive.py --resync
+   ```
+
+### 2. Workflow:
+1. **Upload to Google Drive**: Ensure your documents are synced to a folder named `gojep_data` on your Drive.
+2. **Run Colab**:
+   - Open [Google Colab](https://colab.research.google.com/).
+   - Set Runtime to **T4 GPU** (Runtime -> Change runtime type).
+   - Copy the contents of `tools/colab/extract.py` into a cell and run it.
+3. **Trigger Sync**:
+   Run any extraction or analysis command with the `--sync` flag to automatically pull new results from Colab:
+   ```bash
+   python main.py extract-document-text --sync
+   python main.py analyse-tenders --sync
+   ```
+
+This method ensures your local machine "sees" the Colab outputs immediately without manual downloading.
+
 ## Configuration
 
 The project can be configured through:

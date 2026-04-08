@@ -1,5 +1,10 @@
 """
-Master CLI: `extract` and `analyze` subcommands.
+Master CLI entry point.
+
+Commands are registered from three modules:
+  cli/tenders.py  — Steps 1-5: tender scraping & document extraction
+  cli/awards.py   — Awards extraction (end-to-end)
+  cli/analysis.py — Step 6+: LLM analysis
 """
 import argparse
 import logging
@@ -9,33 +14,47 @@ logger = logging.getLogger(__name__)
 
 
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
     parser = argparse.ArgumentParser(description="GOJEP Tender Data Platform")
-    subparsers = parser.add_subparsers(dest="command", help="Available operations")
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     try:
-        from cli.extract_tenders import create_tenders_extraction_parser
-
-        create_tenders_extraction_parser(subparsers)
+        from cli.tenders import create_tenders_parser
+        create_tenders_parser(subparsers)
     except ImportError as e:
-        print(f"Warning: Could not load tenders extraction module: {e}")
+        print(f"Warning: Could not load tenders module: {e}")
 
     try:
-        from cli.extract_awards import create_awards_extraction_parser
-
-        create_awards_extraction_parser(subparsers)
+        from cli.awards import create_awards_parser
+        create_awards_parser(subparsers)
     except ImportError as e:
-        print(f"Warning: Could not load awards extraction module: {e}")
+        print(f"Warning: Could not load awards module: {e}")
+
+    try:
+        from cli.analysis import create_analysis_parser
+        create_analysis_parser(subparsers)
+    except ImportError as e:
+        print(f"Warning: Could not load analysis module: {e}")
 
     args = parser.parse_args()
 
     if not hasattr(args, "func"):
         parser.print_help()
-        print("\nAvailable commands:")
-        print("  extract-tenders   - Run data extraction operations for Tenders")
-        print("  extract-awards    - Run data extraction operations for Awards")
-        print("\nExamples:")
-        print("  python main.py extract-tenders --max-pages 0        # Extract all tender pages")
-        print("  python main.py extract-awards                       # Extract un-synced awards")
+        print("\nTender pipeline:")
+        print("  run-tenders              Orchestrator: scrape -> details -> download (steps 1-4)")
+        print("  get-tenders              Step 1: Scrape listings -> gojep_tenders_all")
+        print("  get-current-tenders      Step 2: Scrape (48h horizon) -> gojep_tenders_current")
+        print("  get-tender-details       Step 3: Fetch detail pages for DB records")
+        print("  get-tender-documents     Step 4: Download ZIP documents")
+        print("  extract-document-text    Step 5: Extract text (local, non-PDF only)")
+        print("  run-analysis             Step 6: Sync to Drive + extract (Colab) + analyse (Colab)")
+        print("\nAwards pipeline:")
+        print("  extract-awards           End-to-end awards extraction & DB sync")
         sys.exit(1)
 
     try:

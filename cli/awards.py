@@ -89,7 +89,7 @@ def run_awards_extraction(args: argparse.Namespace) -> bool:
         logger.error("Extraction error: %s", e, exc_info=True)
         return False
 
-def create_awards_extraction_parser(subparsers: argparse._SubParsersAction) -> None:
+def create_awards_parser(subparsers: argparse._SubParsersAction) -> None:
     parser = subparsers.add_parser("extract-awards", help="Run GOJEP Awards data extraction & database sync (End-to-End)")
     parser.add_argument(
         "--max-pages",

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "gojep": {
+      "command": "C:/Users/Administrator/Desktop/projects/gojep/venv/Scripts/python.exe",
+      "args": ["tools/colab/mcp/server.py"],
+      "cwd": "C:/Users/Administrator/Desktop/projects/gojep"
+    }
+  }
+}

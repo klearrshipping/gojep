@@ -15,7 +15,6 @@ from config.settings import (
     OPENROUTER_API_KEY,
     CAPTCHA_MODEL,
     OPENROUTER_MODELS,
-    OPENROUTER_REASONING_ENABLED,
     CAPTCHA_SAVE_PATH,
     SELENIUM_TIMEOUT,
     GOJEP_BASE_URL,
@@ -135,8 +134,7 @@ class CaptchaSolver:
                 "max_tokens": CAPTCHA_MAX_TOKENS,
                 "temperature": CAPTCHA_TEMPERATURE,
             }
-            if OPENROUTER_REASONING_ENABLED:
-                payload["reasoning"] = {"enabled": True}
+            # Reasoning disabled — unnecessary for OCR and can cause empty content responses
             
             # Make the API request
             response = requests.post(
