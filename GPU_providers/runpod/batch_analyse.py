@@ -144,14 +144,13 @@ def _build_chunk_requests(folder_path, db_meta):
             parts.append(f"\n\n=== FILE: {source_file} ===\n{text}")
 
         requests.append({
-            "input": {
-                "messages": [
-                    {"role": "system", "content": ANALYSIS_SYSTEM_PROMPT},
-                    {"role": "user",   "content": "".join(parts)},
-                ],
-                "max_tokens":  MAX_OUTPUT_TOKENS,
-                "temperature": 0.1,
-            }
+            "method":      "chat.completions",
+            "messages": [
+                {"role": "system", "content": ANALYSIS_SYSTEM_PROMPT},
+                {"role": "user",   "content": "".join(parts)},
+            ],
+            "max_tokens":  MAX_OUTPUT_TOKENS,
+            "temperature": 0.1,
         })
 
     return requests
@@ -160,15 +159,24 @@ def _build_chunk_requests(folder_path, db_meta):
 def _run_chunk(request: dict) -> str | None:
     """Submit a single chunk to the RunPod endpoint and wait for the result."""
     try:
-        job = endpoint.run(request["input"])
+        # SDK wraps automatically as {"input": request}
+        job = endpoint.run(request)
         output = job.output(timeout=300)  # 5 minute timeout per chunk
-        # Most RunPod LLM endpoints return choices[] like OpenAI
+
         if isinstance(output, dict):
-            return output.get("choices", [{}])[0].get("message", {}).get("content") \
-                or output.get("output") \
-                or output.get("text")
+            # vLLM OpenAI-compatible response nested under "output"
+            if "output" in output and isinstance(output["output"], dict):
+                output = output["output"]
+            # Standard OpenAI choices format
+            choices = output.get("choices")
+            if choices:
+                return choices[0].get("message", {}).get("content")
+            # Fallback keys
+            return output.get("text") or output.get("content") or output.get("output")
+
         if isinstance(output, str):
             return output
+
         return None
     except Exception as e:
         logger.error(f"RunPod job failed: {e}")
