@@ -110,7 +110,11 @@ GOJEP_PASSWORD = _secret_or_env("gojep-password", "GOJEP_PASSWORD")
 
 # RunPod
 RUNPOD_API_KEY     = _secret_or_env("runpod-api-key", "RUNPOD_API_KEY")
-RUNPOD_ENDPOINT_ID = os.getenv("RUNPOD_ENDPOINT_ID", "an87zevcqr1fbk")
+RUNPOD_ENDPOINT_ID = os.getenv("RUNPOD_ENDPOINT_ID", "kv5we7hhojr6y6")
+
+# Lightning AI
+LIGHTNING_API_KEY = os.getenv("LIGHTNING_API_KEY")
+LIGHTNING_USER_ID = os.getenv("LIGHTNING_USER_ID")
 
 # OpenRouter API credentials
 OPENROUTER_API_KEY = _secret_or_env("openrouter-api-key", "OPENROUTER_API_KEY")
@@ -158,6 +162,7 @@ OPENROUTER_MODELS = {
     "qwen3_6_plus_free": "qwen/qwen3.6-plus:free",
     "gemma4_31b": "google/gemma-4-31b-it",
     "qwen3_vl_8b": "qwen/qwen3-vl-8b-instruct",
+    "qwen3_vl_32b": "qwen/qwen3-vl-32b-instruct",
 }
 
 # Model used for pre-extraction document classification
@@ -173,7 +178,7 @@ CAPTCHA_MAX_TOKENS = 256
 
 # Which model slot each task uses (values are keys in OPENROUTER_MODELS)
 CAPTCHA_MODEL = "qwen3_vl_8b"
-ANALYSIS_MODEL = "qwen3_6_plus_free"
+ANALYSIS_MODEL = "qwen3_vl_32b"
 
 # Captcha Settings
 CAPTCHA_RETRY_ATTEMPTS = 3

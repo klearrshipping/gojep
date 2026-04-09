@@ -17,8 +17,6 @@ from config import settings
 from db.supabase_client import SupabaseClient
 from db.tender_row_mapping import listing_json_row_to_tender
 
-from cli.utils import trigger_sync
-
 logger = logging.getLogger(__name__)
 
 
@@ -32,7 +30,7 @@ def run_get_tenders(args: argparse.Namespace) -> bool:
 
     db = SupabaseClient()
     watermark = db.get_latest_publication_date()
-    trigger_sync(args)
+
     print(f"get-tenders  (watermark: {watermark or 'None - full sync'})")
 
     scraper = GOJEPScraper()
@@ -66,7 +64,7 @@ def run_get_current_tenders(args: argparse.Namespace) -> bool:
     from modules.tenders.get_current_tenders import run_current_tenders_extraction
 
     db = SupabaseClient()
-    trigger_sync(args)
+
     records = run_current_tenders_extraction()
 
     if not records:
@@ -167,7 +165,7 @@ def run_get_tender_details(args: argparse.Namespace) -> bool:
     limit = getattr(args, "limit", 100)
 
     # Query records where detail_page_extracted = false
-    trigger_sync(args)
+
     records = db.get_tenders_without_details(limit=limit, table_name=table)
     if not records:
         print("All records already have details extracted.")
@@ -218,7 +216,7 @@ def run_get_tender_documents(args: argparse.Namespace) -> bool:
     json_path = getattr(args, "json_file", None)
 
     if not json_path:
-        trigger_sync(args)
+    
         db = SupabaseClient()
         rows = db.supabase.table(settings.SUPABASE_TABLE_TENDERS_CURRENT)\
             .select("resource_id, detail_url, competition_unique_id")\
@@ -290,7 +288,7 @@ def run_extract_document_text(args: argparse.Namespace) -> bool:
     """Extract structured text from all downloaded tender documents."""
     from modules.tenders.extract_documents import run_document_extraction
 
-    trigger_sync(args)
+
     print("Starting document text extraction...")
     result = run_document_extraction()
     processed = result.get("newly_processed", 0)
@@ -320,12 +318,16 @@ def run_pipeline(_args) -> bool:
     """
     import types
 
+    from cli.analysis import run_analysis_pipeline
+
     steps = [
         ("get-current-tenders",  run_get_current_tenders,  types.SimpleNamespace()),
         ("get-tender-details",   run_get_tender_details,   types.SimpleNamespace(
             table=settings.SUPABASE_TABLE_TENDERS_CURRENT, limit=200)),
         ("get-tender-documents", run_get_tender_documents, types.SimpleNamespace(
             json_file=None, resume=True)),
+        ("run-analysis",         run_analysis_pipeline,    types.SimpleNamespace(
+            skip_extract=False, skip_analyse=False)),
     ]
 
     for name, fn, step_args in steps:
@@ -343,7 +345,6 @@ def run_pipeline(_args) -> bool:
 
     print(f"\n{'='*60}")
     print("  Tender pipeline complete.")
-    print(f"  Next step: run 'colab-pipeline' to extract documents and analyse.")
     print(f"{'='*60}\n")
     return True
 

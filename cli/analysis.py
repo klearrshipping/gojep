@@ -14,8 +14,6 @@ import json
 import os
 import logging
 
-from cli.utils import trigger_sync
-
 logger = logging.getLogger(__name__)
 
 
@@ -24,56 +22,51 @@ logger = logging.getLogger(__name__)
 def run_analysis_pipeline(args: argparse.Namespace) -> bool:
     """
     Full analysis pipeline:
-      1. Sync local documents to Google Drive (rclone bisync)
-      2. Run modules/analysis/extract.py in Colab (Docling PDF extraction)
-      3. Run modules/analysis/analyse.py in Colab (LLM analysis)
-    Steps 2 and 3 are submitted via the Colab MCP server.
+      1. Upload new documents to Supabase Storage + dispatch Lightning for Docling extraction
+      2. Pull extracted text from Supabase document_extractions table to local extracted_docs/
+      3. Run LLM batch analysis via Modal (Qwen2.5-32B on L40S GPU)
     """
     import subprocess
     import sys as _sys
 
-    project_dir  = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    run_in_colab = os.path.join(project_dir, "tools", "colab", "mcp", "run_in_colab.py")
-    extract_script = os.path.join(project_dir, "modules", "analysis", "extract.py")
-    analyse_script = os.path.join(project_dir, "modules", "analysis", "analyse.py")
-    sync_script    = os.path.join(project_dir, "tools", "sync_drive.py")
-
-    skip_sync    = getattr(args, "skip_sync", False)
+    project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     skip_extract = getattr(args, "skip_extract", False)
     skip_analyse = getattr(args, "skip_analyse", False)
 
-    # ── Step 1: Sync to Google Drive ──────────────────────────────────────────
-    if not skip_sync:
-        print("\n" + "="*60)
-        print("  STEP 1: Syncing documents to Google Drive...")
-        print("="*60)
-        result = subprocess.run([_sys.executable, sync_script])
-        if result.returncode != 0:
-            print("  WARNING: Drive sync failed — continuing anyway.")
-        else:
-            print("  Drive sync complete.")
-    else:
-        print("  [skip] Drive sync skipped.")
-
-    # ── Step 2: Docling extraction via Colab MCP ──────────────────────────────
+    # ── Step 1: Upload docs to Supabase Storage + dispatch Lightning extraction ─
     if not skip_extract:
         print("\n" + "="*60)
-        print("  STEP 2: Running Docling extraction in Colab...")
+        print("  STEP 1: Uploading documents and dispatching Lightning extraction...")
         print("="*60)
-        subprocess.run([_sys.executable, run_in_colab, extract_script])
-    else:
-        print("  [skip] Colab extraction skipped.")
+        upload_script = os.path.join(project_dir, "tools", "upload_docs_to_supabase.py")
+        subprocess.run([_sys.executable, upload_script], cwd=project_dir)
 
-    # ── Step 3: LLM analysis via Colab MCP ───────────────────────────────────
+        print("\n  Dispatching Lightning (Docling) extraction...")
+        from modules.extraction.router import main as router_main
+        router_main(local_only=False, lightning_only=True)
+
+        print("\n  Pulling extracted text from Supabase to local extracted_docs/...")
+        from tools.pull_extractions import pull_extractions
+        pull_extractions()
+    else:
+        print("  [skip] Document extraction skipped.")
+
+    # ── Step 2: LLM batch analysis via OpenRouter ─────────────────────────────
     if not skip_analyse:
         print("\n" + "="*60)
-        print("  STEP 3: Running LLM analysis in Colab...")
-        print("  The browser will open. Keep it open until analysis is done.")
-        print("  Press Ctrl+C in this terminal to close the browser and continue.")
+        print("  STEP 2: Running LLM analysis via OpenRouter (qwen/qwen3-vl-32b-instruct)...")
         print("="*60)
-        subprocess.run([_sys.executable, run_in_colab, analyse_script])
+        analyse_script = os.path.join(project_dir, "GPU_providers", "modal", "batch_analyse.py")
+        result = subprocess.run(
+            [_sys.executable, analyse_script],
+            cwd=project_dir,
+        )
+        if result.returncode != 0:
+            print("  WARNING: Analysis returned non-zero exit code.")
+        else:
+            print("  Analysis complete.")
     else:
-        print("  [skip] Colab analysis skipped.")
+        print("  [skip] Modal analysis skipped.")
 
     print("\n" + "="*60)
     print("  Analysis pipeline complete.")
@@ -317,9 +310,8 @@ def create_analysis_parser(subparsers) -> None:
         "run-analysis",
         help="Orchestrator: sync to Drive -> extract (Colab) -> analyse (Colab)",
     )
-    p0.add_argument("--skip-sync",    action="store_true", help="Skip Google Drive sync")
-    p0.add_argument("--skip-extract", action="store_true", help="Skip Colab Docling extraction")
-    p0.add_argument("--skip-analyse", action="store_true", help="Skip Colab LLM analysis")
+    p0.add_argument("--skip-extract", action="store_true", help="Skip document text extraction")
+    p0.add_argument("--skip-analyse", action="store_true", help="Skip Modal LLM analysis")
     p0.set_defaults(func=run_analysis_pipeline)
 
     # review-analysis

@@ -191,14 +191,42 @@ def run_local_extraction(tender_id: str, filename: str, storage_path: str):
 # ── Lightning dispatch ─────────────────────────────────────────────────────────
 
 def dispatch_to_lightning():
-    """Trigger the Lightning cloud job for GPU-based extraction."""
-    lightning_script = Path(__file__).resolve().parents[2] / "tools" / "lightning" / "main.py"
-    print(f"Dispatching to Lightning: {lightning_script}")
-    result = subprocess.run(
-        ["lightning", "run", "script", str(lightning_script), "--cloud", "--machine", "T4"],
-        capture_output=False,
+    """Trigger the Lightning cloud job for GPU-based extraction via lightning-sdk."""
+    from lightning_sdk import Studio, Machine
+
+    print("Connecting to Lightning Studio...")
+    studio = Studio(
+        name="docling-gpu-extraction-devbox",
+        teamspace="document-information-extraction-project",
+        user="klearrshipping",
     )
-    return result.returncode == 0
+
+    # Start the studio if it's not already running
+    status = getattr(studio, "status", None)
+    if status is None or str(status).lower() != "running":
+        print(f"Studio is not running (status: {status}). Starting...")
+        studio.start()
+        print("Studio started.")
+    else:
+        print(f"Studio already running (status: {status}).")
+
+    script_path = "/teamspace/studios/this_studio/main.py"
+    print(f"Running extraction script on Lightning: {script_path}")
+    try:
+        studio.run(f"python {script_path}")
+        print("Lightning extraction complete.")
+        print("Stopping studio to save costs...")
+        studio.stop()
+        print("Studio stopped.")
+        return True
+    except Exception as e:
+        print(f"Lightning job failed: {e}")
+        print("Stopping studio after failure...")
+        try:
+            studio.stop()
+        except Exception:
+            pass
+        return False
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
@@ -237,7 +265,7 @@ def main(local_only: bool = False, lightning_only: bool = False):
 
     # ── Local extraction ───────────────────────────────────────────────────────
     if not lightning_only and local_queue:
-        print(f"\n── Local extraction ({len(local_queue)} files) ──")
+        print(f"\n-- Local extraction ({len(local_queue)} files) --")
         local_ok = local_fail = 0
         for tender_id, filename, storage_path in local_queue:
             print(f"  [{tender_id}] {filename}...")
@@ -249,7 +277,7 @@ def main(local_only: bool = False, lightning_only: bool = False):
 
     # ── Lightning dispatch ─────────────────────────────────────────────────────
     if not local_only and lightning_queue:
-        print(f"\n── Lightning dispatch ({len(lightning_queue)} files) ──")
+        print(f"\n-- Lightning dispatch ({len(lightning_queue)} files) --")
         dispatch_to_lightning()
 
 
