@@ -108,10 +108,6 @@ BROWSER_HEIGHT = 1080
 GOJEP_USERNAME = _secret_or_env("gojep-username", "GOJEP_USERNAME")
 GOJEP_PASSWORD = _secret_or_env("gojep-password", "GOJEP_PASSWORD")
 
-# RunPod
-RUNPOD_API_KEY     = _secret_or_env("runpod-api-key", "RUNPOD_API_KEY")
-RUNPOD_ENDPOINT_ID = os.getenv("RUNPOD_ENDPOINT_ID", "kv5we7hhojr6y6")
-
 # Lightning AI
 LIGHTNING_API_KEY = os.getenv("LIGHTNING_API_KEY")
 LIGHTNING_USER_ID = os.getenv("LIGHTNING_USER_ID")
