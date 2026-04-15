@@ -33,21 +33,14 @@ def run_analysis_pipeline(args: argparse.Namespace) -> bool:
     skip_extract = getattr(args, "skip_extract", False)
     skip_analyse = getattr(args, "skip_analyse", False)
 
-    # ── Step 1: Upload docs to Supabase Storage + dispatch Lightning extraction ─
+    # ── Step 1: Local document extraction ─────────────────────────────────────
     if not skip_extract:
         print("\n" + "="*60)
-        print("  STEP 1: Uploading documents and dispatching Lightning extraction...")
+        print("  STEP 1: Extracting documents from local folders...")
         print("="*60)
-        upload_script = os.path.join(project_dir, "tools", "upload_docs_to_supabase.py")
-        subprocess.run([_sys.executable, upload_script], cwd=project_dir)
-
-        print("\n  Dispatching Lightning (Docling) extraction...")
-        from modules.extraction.router import main as router_main
-        router_main(local_only=False, lightning_only=True)
-
-        print("\n  Pulling extracted text from Supabase to local extracted_docs/...")
-        from tools.pull_extractions import pull_extractions
-        pull_extractions()
+        from modules.document_processing.extract import run_document_extraction
+        result = run_document_extraction()
+        print(f"\n  Extraction complete: {result['newly_processed']} processed, {result['skipped']} skipped, {result['errors']} errors")
     else:
         print("  [skip] Document extraction skipped.")
 

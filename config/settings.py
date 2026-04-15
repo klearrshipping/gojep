@@ -115,13 +115,6 @@ LIGHTNING_USER_ID = os.getenv("LIGHTNING_USER_ID")
 # OpenRouter API credentials
 OPENROUTER_API_KEY = _secret_or_env("openrouter-api-key", "OPENROUTER_API_KEY")
 
-# Local LLM configuration (llama.cpp / Gemma 4 Enterprise)
-LOCAL_LLM_URL = os.getenv("LOCAL_LLM_URL", "http://localhost:8000/v1/chat/completions")
-LOCAL_LLM_MODEL = os.getenv("LOCAL_LLM_MODEL", "gemma-4-e2b")
-LOCAL_LLM_MAX_TOKENS = int(os.getenv("LOCAL_LLM_MAX_TOKENS", "8192"))
-LOCAL_LLM_TIMEOUT = int(os.getenv("LOCAL_LLM_TIMEOUT", "300"))
-# Set to "false" to fall back to OpenRouter for analysis
-ANALYSIS_USE_LOCAL_LLM = os.getenv("ANALYSIS_USE_LOCAL_LLM", "true").lower() == "true"
 
 # Supabase Configuration
 SUPABASE_URL = _secret_or_env("supabase-url-procurement", "SUPABASE_URL")
@@ -141,6 +134,8 @@ SUPABASE_TABLE_AWARDS_CURRENT = "gojep_awards_current"
 SUPABASE_TABLE_AWARD_DETAILS_ALL = "gojep_award_details_all"
 SUPABASE_TABLE_AWARD_ANALYSIS_RESULTS = "gojep_awards_analysis_results"
 SUPABASE_TABLE_CONTRACT_ANALYSIS = "gojep_contract_analysis"
+SUPABASE_TABLE_EMAIL_UPDATES  = "gojep_email_updates"
+SUPABASE_TABLE_EMAIL_ACTIONS  = "gojep_email_actions"
 
 # OpenRouter API configuration
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -183,6 +178,7 @@ CAPTCHA_SAVE_PATH = str(_PROJECT_ROOT / "tools" / "captcha" / "images")
 # Data Export Settings
 OUTPUT_FORMAT = "json"
 TENDERS_OUTPUT_DIRECTORY = str(_PROJECT_ROOT / "data" / "tenders")
+TENDERS_LISTINGS_DIRECTORY = str(_PROJECT_ROOT / "data" / "tenders" / "listings")
 AWARDS_OUTPUT_DIRECTORY = str(_PROJECT_ROOT / "data" / "awards")
 AWARDS_DETAILS_OUTPUT_DIRECTORY = str(_PROJECT_ROOT / "data" / "awards" / "details")
 OUTPUT_DIRECTORY = TENDERS_OUTPUT_DIRECTORY
@@ -221,9 +217,10 @@ AUTO_RECONCILE = True
 # Repository root (for tools / scripts)
 PROJECT_ROOT = str(_PROJECT_ROOT)
 
-# WSL Python interpreter path — used by extract_documents.py for Docling
-# Points to the venv created inside WSL that has docling + torch installed
-WSL_PYTHON = os.getenv(
-    "WSL_PYTHON",
-    "/mnt/c/Users/Administrator/Desktop/projects/gojep/venv_wsl/bin/python",
-)
+# Gmail API settings
+GMAIL_CREDENTIALS_FILE = str(_PROJECT_ROOT / "config" / "credentials_gojep.json")
+GMAIL_TOKEN_FILE       = str(_PROJECT_ROOT / "config" / "gmail_token.json")
+GMAIL_SCOPES           = ["https://www.googleapis.com/auth/gmail.modify"]
+GMAIL_PROCESSED_LABEL  = "tender-update-processed"
+GMAIL_SYSTEM_SENDER    = "jamaica-eproc-noreply@eurodyn.com"
+

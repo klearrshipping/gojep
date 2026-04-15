@@ -21,17 +21,11 @@ import requests
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from config import settings as config
-from modules.analysis.analyse_tender import (
-    ANALYSIS_SYSTEM_PROMPT,
-    _fetch_db_metadata,
-    _extract_file_texts,
-    _split_into_chunks,
-    _format_metadata_header,
-    _merge_parsed_results,
-    LOCAL_LLM_TOKEN_LIMIT,
-    DB_META_FIELDS,
-)
-from db.supabase_client import SupabaseClient
+from modules.analysis.prompt import ANALYSIS_SYSTEM_PROMPT, LOCAL_LLM_TOKEN_LIMIT
+from modules.analysis.fetch import _fetch_db_metadata, _format_metadata_header, DB_META_FIELDS
+from modules.analysis.chunk import _extract_file_texts, _split_into_chunks
+from modules.analysis.parse import _merge_parsed_results
+from db.client.supabase_client import SupabaseClient
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
 logger = logging.getLogger(__name__)
@@ -50,8 +44,26 @@ def _is_failed(folder_path):
     return os.path.exists(os.path.join(folder_path, FAILED_MARKER))
 
 def _has_extracted_docs(folder_path):
-    d = os.path.join(folder_path, "extracted_docs")
-    return os.path.isdir(d) and any(f.endswith(".json") for f in os.listdir(d))
+    """
+    Return True if this tender folder has at least one non-noise JSON file ready
+    for analysis. Checks all locations that _extract_file_texts reads from:
+      - tender_data/json_documents/
+      - email_updates/clarifications/json_documents/
+      - email_updates/new_documents/json_documents/
+    """
+    candidates = [
+        os.path.join(folder_path, "tender_data", "json_documents"),
+        os.path.join(folder_path, "email_updates", "clarifications", "json_documents"),
+        os.path.join(folder_path, "email_updates", "new_documents", "json_documents"),
+    ]
+    for d in candidates:
+        if os.path.isdir(d):
+            if any(
+                f.endswith(".json") and f != ".manifest.json"
+                for f in os.listdir(d)
+            ):
+                return True
+    return False
 
 def _mark_failed(folder_path):
     open(os.path.join(folder_path, FAILED_MARKER), "w").close()
@@ -115,11 +127,13 @@ def _save_result(folder_path, folder_name, result, db_meta, db):
     if db and config.SAVE_TO_SUPABASE:
         resource_id     = db_meta.get("resource_id") if db_meta else None
         competition_uid = folder_name.replace("_", "/", 1)
+        # Exclude keys not present in gojep_analysis_results schema
+        _SKIP_KEYS = {"folder", "analysed_at", "analysis_timestamp", "validation_warnings"}
         row = {
             "tender_folder":         folder_name,
             "competition_unique_id": competition_uid,
             "analysis_timestamp":    now,
-            **{k: v for k, v in result.items() if k not in ("folder", "analysed_at", "analysis_timestamp")},
+            **{k: v for k, v in result.items() if k not in _SKIP_KEYS},
         }
         if resource_id:
             row["resource_id"] = resource_id

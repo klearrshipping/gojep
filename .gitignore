@@ -1,6 +1,16 @@
 # Environment variables (contains secrets)
 .env
 
+# Google API credentials and OAuth tokens
+config/credentials_gojep.json
+config/gmail_token.json
+
+# Claude Code local config
+.claude/
+
+# Stray files
+null
+
 # Python artifacts
 __pycache__/
 *.py[cod]

@@ -31,7 +31,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 from config import settings as config
 from tools.captcha.solve_captcha import CaptchaSolver
-from db.tender_row_mapping import resource_id_from_url
+from db.tenders.tender_row_mapping import resource_id_from_url
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ class GOJEPScraper:
         self.driver: Optional[webdriver.Chrome] = None
         self.captcha_solver = CaptchaSolver()
         self._setup_logging()
-        os.makedirs(config.TENDERS_OUTPUT_DIRECTORY, exist_ok=True)
+        os.makedirs(config.TENDERS_LISTINGS_DIRECTORY, exist_ok=True)
 
     def _setup_logging(self) -> None:
         level = getattr(logging, str(config.LOG_LEVEL).upper(), logging.INFO)
@@ -252,7 +252,7 @@ class GOJEPScraper:
 
     def _save_json(self, records: List[Dict[str, Any]]) -> str:
         ts = datetime.now(JAMAICA_TZ).strftime("%Y%m%d_%H%M%S")
-        output_path = os.path.join(config.TENDERS_OUTPUT_DIRECTORY, f"tenders_{ts}.json")
+        output_path = os.path.join(config.TENDERS_LISTINGS_DIRECTORY, f"tenders_{ts}.json")
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(records, f, indent=2, ensure_ascii=False)
         return output_path

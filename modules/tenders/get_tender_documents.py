@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, urlparse
 
-from selenium.common.exceptions import NoAlertPresentException, NoSuchElementException, TimeoutException
+from selenium.common.exceptions import NoAlertPresentException, NoSuchElementException, NoSuchWindowException, TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
@@ -36,10 +36,48 @@ from tools.captcha.solve_captcha import CaptchaSolver
 from tools.login.gojep_login import ensure_gojep_logged_in
 
 from .get_tenders import GOJEPScraper
+from modules.shared import document_download
 
 logger = logging.getLogger(__name__)
 
 DOCUMENTS_SUBDIR = "documents"
+
+
+def _extract_zip_flat(zip_path: str, dest_dir: str) -> None:
+    """
+    Extract all files from a ZIP directly into dest_dir with no sub-folders.
+    If a filename already exists in dest_dir it is skipped (not overwritten).
+    After extraction any nested .zip files found in dest_dir are extracted the
+    same way recursively, then deleted.
+    """
+    os.makedirs(dest_dir, exist_ok=True)
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        for member in zf.infolist():
+            if member.is_dir():
+                continue
+            fname = os.path.basename(member.filename)
+            if not fname:
+                continue
+            target = os.path.join(dest_dir, fname)
+            if os.path.exists(target):
+                continue
+            with zf.open(member) as src, open(target, "wb") as dst:
+                dst.write(src.read())
+
+    # Recursively flatten any nested ZIPs that were just extracted
+    for name in list(os.listdir(dest_dir)):
+        if not name.lower().endswith(".zip"):
+            continue
+        nested = os.path.join(dest_dir, name)
+        try:
+            _extract_zip_flat(nested, dest_dir)
+            os.remove(nested)
+            logger.info("Extracted and removed nested zip: %s", nested)
+        except zipfile.BadZipFile:
+            logger.warning("Skipped bad nested zip: %s", nested)
+            os.remove(nested)
+        except Exception as e:
+            logger.warning("Failed to extract nested zip %s: %s", nested, e)
 
 
 def _captcha_visible_on_page(driver: Any, wait_sec: float = 4.0) -> bool:
@@ -171,7 +209,7 @@ def _try_accept_alert(driver: Any, log: bool = True) -> Optional[str]:
         if log:
             logger.info("Accepted JS alert: %s", text[:200] if text else "")
         return text
-    except NoAlertPresentException:
+    except (NoAlertPresentException, NoSuchWindowException):
         return None
 
 
@@ -466,8 +504,8 @@ def run_downloads(
                 continue
 
             safe_name = re.sub(r"[^\w\-.]+", "_", str(used_id)) or "unknown"
-            dest_zip = os.path.join(base_out, f"{safe_name}.zip")
-            extract_dir = os.path.join(base_out, safe_name)
+            tender_dir = os.path.join(base_out, safe_name)
+            extract_dir = os.path.join(tender_dir, "tender_data", "document_downloads")
 
             if resume and os.path.isdir(extract_dir) and any(os.scandir(extract_dir)):
                 rel = os.path.join(DOCUMENTS_SUBDIR, safe_name).replace("\\", "/")
@@ -489,9 +527,12 @@ def run_downloads(
                 time.sleep(0.4)
                 _handle_captcha_on_current_page(scraper.driver, scraper.captcha_solver, ui_wait)
 
+                dest_zip = os.path.join(tender_dir, f"{safe_name}.zip")
+                os.makedirs(tender_dir, exist_ok=True)
+
                 download_zip_via_ui(
                     scraper.driver,
-                    base_out,
+                    base_out,   # Chrome saves ZIPs here — watch this dir, then move to tender_dir
                     dest_zip,
                     ui_wait=ui_wait,
                     file_wait=download_timeout,
@@ -502,24 +543,20 @@ def run_downloads(
                 zip_size = os.path.getsize(dest_zip) if os.path.exists(dest_zip) else 0
                 
                 try:
-                    with zipfile.ZipFile(dest_zip, 'r') as zip_ref:
-                        zip_ref.extractall(extract_dir)
-                    logger.info("Extracted %s to %s", dest_zip, extract_dir)
+                    _extract_zip_flat(dest_zip, extract_dir)
+                    logger.info("Extracted (flat) %s → %s", dest_zip, extract_dir)
                     row["extracted_dir"] = os.path.join(DOCUMENTS_SUBDIR, safe_name).replace("\\", "/")
-
-                    # Ensure Zip deletion post-extraction
                     os.remove(dest_zip)
-                    logger.info("Cleaned up and deleted zip: %s", dest_zip)
+                    logger.info("Deleted zip: %s", dest_zip)
 
-                    # Unblock all extracted files — removes Windows Zone.ID (Mark of the Web)
-                    # so WSL/Docling can read them without "Access is denied"
+                    # Remove Windows Zone.ID (Mark of the Web) so Docling can read files
                     try:
                         import subprocess
                         subprocess.run(
-                            ["powershell", "-Command", f"Get-ChildItem -Path '{extract_dir}' -Recurse | Unblock-File"],
-                            capture_output=True, timeout=30
+                            ["powershell", "-Command",
+                             f"Get-ChildItem -Path '{extract_dir}' -Recurse | Unblock-File"],
+                            capture_output=True, timeout=30,
                         )
-                        logger.info("Unblocked files in %s", extract_dir)
                     except Exception as ub_err:
                         logger.warning("Could not unblock files in %s: %s", extract_dir, ub_err)
 
@@ -556,6 +593,218 @@ def run_downloads(
         "records": results,
     }
     return payload
+
+
+def _upload_file_to_supabase(local_path: str, competition_unique_id: str) -> bool:
+    """Upload a single file to tender-documents/<competition_unique_id>/<filename>."""
+    import requests as _requests
+
+    CONTENT_TYPES = {
+        ".pdf":  "application/pdf",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".doc":  "application/msword",
+        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".xls":  "application/vnd.ms-excel",
+        ".xml":  "application/xml",
+        ".zip":  "application/zip",
+    }
+
+    def _sanitize(name: str) -> str:
+        safe = ""
+        for ch in name:
+            if ch.isascii() and (ch.isalnum() or ch in "-_.() "):
+                safe += ch
+            else:
+                safe += "_"
+        return safe
+
+    filename     = _sanitize(os.path.basename(local_path))
+    storage_path = f"{competition_unique_id}/{filename}"
+    suffix       = os.path.splitext(local_path)[1].lower()
+    content_type = CONTENT_TYPES.get(suffix, "application/octet-stream")
+    url          = f"{config.SUPABASE_URL.rstrip('/')}/storage/v1/object/tender-documents/{storage_path}"
+
+    headers = {
+        "apikey":        config.SUPABASE_SECRET_KEY,
+        "Authorization": f"Bearer {config.SUPABASE_SECRET_KEY}",
+    }
+
+    with open(local_path, "rb") as f:
+        resp = _requests.post(
+            url,
+            headers={**headers, "Content-Type": content_type, "x-upsert": "true"},
+            data=f,
+        )
+
+    if resp.status_code in (200, 201):
+        logger.info("  Uploaded: %s", storage_path)
+        return True
+    else:
+        logger.error("  Upload failed (%s): %s — %s", resp.status_code, storage_path, resp.text[:200])
+        return False
+
+
+def download_contract_documents_direct(
+    driver,
+    resource_id: str,
+    competition_unique_id: str,
+    action_url: str,
+    docs_base_dir: str | None = None,
+    save_to_email_updates: bool = False,
+) -> dict[str, Any]:
+    """
+    Navigate directly to listContractDocuments.do (URL from the email), click
+    "Download Zip file", extract, upload new files to Supabase Storage.
+
+    Used by the email pipeline for `new_documents` update type.
+
+    Args:
+        save_to_email_updates: If True, save to email_updates/new_documents/document_downloads/
+                               If False, save to tender_data/document_downloads/
+
+    Returns dict:
+    {
+      "resource_id": str,
+      "competition_unique_id": str,
+      "new_files_downloaded": int,
+      "skipped_already_uploaded": int,
+      "failed_uploads": int,
+      "downloaded_files": [str, ...],
+    }
+    """
+    if docs_base_dir is None:
+        docs_base_dir = os.path.join(config.TENDERS_OUTPUT_DIRECTORY, DOCUMENTS_SUBDIR)
+
+    safe_name = re.sub(r"[^\w\-.]+", "_", str(competition_unique_id)) or str(resource_id)
+    tender_dir = os.path.join(docs_base_dir, safe_name)
+
+    if save_to_email_updates:
+        from modules.shared.document_sync import EMAIL_UPDATES, NEW_DOCUMENTS, DOCUMENT_DOWNLOADS
+        extract_dir = os.path.join(tender_dir, EMAIL_UPDATES, NEW_DOCUMENTS, DOCUMENT_DOWNLOADS)
+    else:
+        extract_dir = os.path.join(tender_dir, "tender_data", "document_downloads")
+
+    os.makedirs(extract_dir, exist_ok=True)
+
+    ui_wait   = getattr(config, "SELENIUM_TIMEOUT", 30)
+    file_wait = 180
+
+    # ── Navigate directly to the contract documents page ─────────────────────
+    logger.info("Navigating to contract documents page: %s", action_url)
+    driver.get(action_url)
+    WebDriverWait(driver, ui_wait).until(
+        lambda d: d.execute_script("return document.readyState") == "complete"
+    )
+    time.sleep(0.5)
+
+    # ── Click Download Zip file button ────────────────────────────────────────
+    main_handle = driver.current_window_handle
+    before      = set(os.listdir(os.path.abspath(tender_dir)))
+
+    try:
+        dl_btn = WebDriverWait(driver, ui_wait).until(
+            EC.element_to_be_clickable(
+                (By.XPATH, "//button[contains(@onclick,'downloadForAnonymousUser') or contains(.,'Download Zip')]")
+            )
+        )
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", dl_btn)
+        dl_btn.click()
+        logger.info("Clicked 'Download Zip file' button")
+    except Exception as e:
+        return {
+            "resource_id":              resource_id,
+            "competition_unique_id":    competition_unique_id,
+            "new_files_downloaded":     0,
+            "skipped_already_uploaded": 0,
+            "failed_uploads":           0,
+            "downloaded_files":         [],
+            "error":                    f"Download button not found: {e}",
+        }
+
+    time.sleep(0.6)
+    _try_accept_alert(driver)
+
+    if _switch_to_new_window(driver, main_handle, timeout_sec=20.0):
+        _complete_selection_window(driver, WebDriverWait(driver, ui_wait), main_handle)
+        time.sleep(0.4)
+        _try_accept_alert(driver)
+
+    # ── Wait for ZIP ──────────────────────────────────────────────────────────
+    zip_path = _wait_for_new_zip(tender_dir, before, float(file_wait))
+    if not zip_path:
+        return {
+            "resource_id":              resource_id,
+            "competition_unique_id":    competition_unique_id,
+            "new_files_downloaded":     0,
+            "skipped_already_uploaded": 0,
+            "failed_uploads":           0,
+            "downloaded_files":         [],
+            "error":                    "ZIP download timed out",
+        }
+
+    _close_extra_windows(driver, main_handle)
+
+    # ── Extract ZIP (flat) ────────────────────────────────────────────────────
+    existing_files = {f for f in os.listdir(extract_dir)}
+    try:
+        _extract_zip_flat(zip_path, extract_dir)
+        logger.info("Extracted (flat) %s → %s", zip_path, extract_dir)
+        os.remove(zip_path)
+
+        # Remove Windows Zone.ID so Docling can read files
+        try:
+            import subprocess
+            subprocess.run(
+                ["powershell", "-Command",
+                 f"Get-ChildItem -Path '{extract_dir}' -Recurse | Unblock-File"],
+                capture_output=True, timeout=30,
+            )
+        except Exception:
+            pass
+    except zipfile.BadZipFile as e:
+        return {
+            "resource_id":              resource_id,
+            "competition_unique_id":    competition_unique_id,
+            "new_files_downloaded":     0,
+            "skipped_already_uploaded": 0,
+            "failed_uploads":           0,
+            "downloaded_files":         [],
+            "error":                    f"Bad ZIP: {e}",
+        }
+
+    # ── Upload new files to Supabase Storage ─────────────────────────────────
+    new_count     = 0
+    skipped_count = 0
+    failed_count  = 0
+    downloaded_files: list[str] = []
+
+    EXTRACTABLE = {".pdf", ".docx", ".doc", ".xlsx", ".xls", ".xml"}
+
+    for fname in os.listdir(extract_dir):
+        if fname in existing_files:
+            skipped_count += 1
+            continue
+        fpath = os.path.join(extract_dir, fname)
+        if not os.path.isfile(fpath):
+            continue
+        ext = os.path.splitext(fname)[1].lower()
+        if ext not in EXTRACTABLE:
+            continue
+
+        if _upload_file_to_supabase(fpath, safe_name):
+            downloaded_files.append(fname)
+            new_count += 1
+        else:
+            failed_count += 1
+
+    return {
+        "resource_id":              resource_id,
+        "competition_unique_id":    competition_unique_id,
+        "new_files_downloaded":     new_count,
+        "skipped_already_uploaded": skipped_count,
+        "failed_uploads":           failed_count,
+        "downloaded_files":         downloaded_files,
+    }
 
 
 def _parse_args() -> argparse.Namespace:

@@ -14,6 +14,10 @@ logger = logging.getLogger(__name__)
 
 
 def main():
+    # Ensure Unicode output works on Windows terminals
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
@@ -40,6 +44,12 @@ def main():
         create_analysis_parser(subparsers)
     except ImportError as e:
         print(f"Warning: Could not load analysis module: {e}")
+
+    try:
+        from cli.emails import create_emails_parser
+        create_emails_parser(subparsers)
+    except ImportError as e:
+        print(f"Warning: Could not load emails module: {e}")
 
     args = parser.parse_args()
 

@@ -12,7 +12,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
-from db.tender_row_mapping import parse_timestamp_field
+from db.tenders.tender_row_mapping import parse_timestamp_field
 from modules.tenders.get_tenders import GOJEPScraper, JAMAICA_TZ
 
 logger = logging.getLogger(__name__)

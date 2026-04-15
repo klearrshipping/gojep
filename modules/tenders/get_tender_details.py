@@ -160,7 +160,7 @@ class TenderDetailExtractor:
                 failures.append({"title_url": url, "error": str(e)})
 
         timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        output_path = os.path.join(config.TENDERS_OUTPUT_DIRECTORY, f"tender_details_{timestamp}.json")
+        output_path = os.path.join(config.TENDERS_LISTINGS_DIRECTORY, f"tender_details_{timestamp}.json")
         payload = {
             "source_file": input_json_path,
             "total_urls": len(urls),
@@ -177,11 +177,11 @@ class TenderDetailExtractor:
 
 
 def _latest_tenders_json() -> Optional[str]:
-    if not os.path.isdir(config.TENDERS_OUTPUT_DIRECTORY):
+    if not os.path.isdir(config.TENDERS_LISTINGS_DIRECTORY):
         return None
     candidates = [
-        os.path.join(config.TENDERS_OUTPUT_DIRECTORY, name)
-        for name in os.listdir(config.TENDERS_OUTPUT_DIRECTORY)
+        os.path.join(config.TENDERS_LISTINGS_DIRECTORY, name)
+        for name in os.listdir(config.TENDERS_LISTINGS_DIRECTORY)
         if name.startswith("tenders_") and name.endswith(".json")
     ]
     if not candidates:

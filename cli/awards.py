@@ -12,8 +12,8 @@ from typing import Optional
 from config import settings as config
 from modules.awards.get_awards import GOJEPAwardsScraper
 from modules.awards.get_awards_details import extract_award_pdf, resolve_pdf_path
-from db.supabase_client import SupabaseClient
-from db.award_row_mapping import merge_awards_and_details
+from db.client.supabase_client import SupabaseClient
+from db.awards.award_row_mapping import merge_awards_and_details
 from ops.reconcile_awards import run_reconciliation
 
 logger = logging.getLogger(__name__)

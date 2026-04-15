@@ -176,6 +176,10 @@ class SupabaseQuery:
         self._add_filter(field, f"neq.{self._encode_value(value)}")
         return self
 
+    def ilike(self, field: str, pattern: str):
+        self._add_filter(field, f"ilike.{self._encode_value(pattern)}")
+        return self
+
     def gte(self, field: str, value: Any):
         self._add_filter(field, f"gte.{self._encode_value(value)}")
         return self
@@ -187,6 +191,11 @@ class SupabaseQuery:
     def in_(self, field: str, values: Iterable[Any]):
         encoded = ",".join(self._encode_value(v) for v in values)
         self._add_filter(field, f"in.({encoded})")
+        return self
+
+    def not_in_(self, field: str, values: Iterable[Any]):
+        encoded = ",".join(self._encode_value(v) for v in values)
+        self._add_filter(field, f"not.in.({encoded})")
         return self
 
     def order(self, field: str, desc: bool = False):

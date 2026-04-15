@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 # Add parent directory to path to import modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from db.supabase_client import SupabaseClient
+from db.client.supabase_client import SupabaseClient
 
 # Setup logging
 logging.basicConfig(

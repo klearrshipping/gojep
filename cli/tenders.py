@@ -11,13 +11,123 @@ Pipeline order:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+import os
+import re
+import shutil
 
 from config import settings
-from db.supabase_client import SupabaseClient
-from db.tender_row_mapping import listing_json_row_to_tender
+from db.client.supabase_client import SupabaseClient
+from db.tenders.tender_row_mapping import listing_json_row_to_tender
 
 logger = logging.getLogger(__name__)
+
+
+
+def _safe_folder_name(competition_unique_id: str) -> str:
+    """Mirror the folder-naming logic in get_tender_documents.py."""
+    return re.sub(r"[^\w\-.]+", "_", str(competition_unique_id))
+
+
+def prune_documents_to_current_listing(_args=None) -> bool:
+    """
+    Ensure the documents folder is an exact mirror of gojep_tenders_current.
+
+    - Deletes any folder not corresponding to a competition_unique_id in the table.
+    - Raises an error if folder count does not exactly match tender count after pruning.
+    """
+    try:
+        db = SupabaseClient()
+        rows = (
+            db.supabase.table(settings.SUPABASE_TABLE_TENDERS_CURRENT)
+            .select("competition_unique_id")
+            .execute()
+            .data or []
+        )
+    except Exception as e:
+        logger.warning(f"Could not fetch tenders_current from Supabase: {e}")
+        print("Skipping document pruning — could not reach Supabase.")
+        return True
+
+    if not rows:
+        print("gojep_tenders_current is empty — skipping document pruning to avoid wiping all folders.")
+        return True
+
+    tender_count = len(rows)
+
+    # Build valid folder names solely from competition_unique_id
+    valid_folders: set[str] = set()
+    for row in rows:
+        cid = row.get("competition_unique_id")
+        if cid:
+            valid_folders.add(_safe_folder_name(str(cid)))
+
+    print(f"gojep_tenders_current: {tender_count} tenders.")
+
+    docs_dir = os.path.join(settings.TENDERS_OUTPUT_DIRECTORY, "documents")
+    if not os.path.isdir(docs_dir):
+        print("Documents folder does not exist — nothing to prune.")
+        return True
+
+    removed = 0
+    kept = 0
+    for entry in os.listdir(docs_dir):
+        entry_path = os.path.join(docs_dir, entry)
+        if not os.path.isdir(entry_path):
+            continue
+        if entry in valid_folders:
+            kept += 1
+        else:
+            print(f"  Removing folder: {entry}")
+            try:
+                shutil.rmtree(entry_path)
+                removed += 1
+            except Exception as e:
+                logger.error(f"  Failed to remove {entry}: {e}")
+
+    print(f"  Pruned: kept {kept}, removed {removed} folder(s).")
+    return True
+
+
+def verify_documents_integrity(_args=None) -> bool:
+    """
+    Confirm the documents folder exactly mirrors gojep_tenders_current.
+    Called after get-tender-documents so all missing folders have been downloaded.
+    Raises an error if counts still don't match — indicating a download failure.
+    """
+    try:
+        db = SupabaseClient()
+        rows = (
+            db.supabase.table(settings.SUPABASE_TABLE_TENDERS_CURRENT)
+            .select("competition_unique_id")
+            .execute()
+            .data or []
+        )
+    except Exception as e:
+        logger.warning(f"Could not fetch tenders_current from Supabase: {e}")
+        print("Skipping integrity check — could not reach Supabase.")
+        return True
+
+    tender_count = len(rows)
+    docs_dir = os.path.join(settings.TENDERS_OUTPUT_DIRECTORY, "documents")
+    folder_count = sum(
+        1 for e in os.listdir(docs_dir)
+        if os.path.isdir(os.path.join(docs_dir, e))
+    ) if os.path.isdir(docs_dir) else 0
+
+    if folder_count != tender_count:
+        msg = (
+            f"ERROR: documents folder count ({folder_count}) does not match "
+            f"gojep_tenders_current ({tender_count}). "
+            f"{abs(tender_count - folder_count)} tender(s) are missing document folders."
+        )
+        print(msg)
+        logger.error(msg)
+        return False
+
+    print(f"  OK — {folder_count} folders match {tender_count} tenders exactly.")
+    return True
 
 
 
@@ -82,17 +192,21 @@ def run_get_current_tenders(args: argparse.Namespace) -> bool:
 
     # Push fresh listings — upsert to ALL first (satisfies FK), then CURRENT and CONTRACT_ANALYSIS
     pushed = 0
+    current_resource_ids = []
     for i, raw in enumerate(records):
         row = listing_json_row_to_tender(raw)
         if not row:
             continue
+        rid = row.get("resource_id")
+        if rid:
+            current_resource_ids.append(rid)
         # Ensure the record exists in gojep_tenders_all before inserting into current
         db.insert_tenders_batch([row], table_name=settings.SUPABASE_TABLE_TENDERS_ALL)
         result = db.insert_tenders_batch([row], table_name=settings.SUPABASE_TABLE_TENDERS_CURRENT)
         if result.get("success", 0) > 0:
             pushed += 1
         else:
-            logger.error(f"[{i+1}] Failed to insert {row.get('resource_id')} into {settings.SUPABASE_TABLE_TENDERS_CURRENT}")
+            logger.error(f"[{i+1}] Failed to insert {rid} into {settings.SUPABASE_TABLE_TENDERS_CURRENT}")
 
         # Insert into contract_analysis — ignore if already exists so we never overwrite
         # enriched fields (competition_unique_id, analysis_timestamp, detail data)
@@ -101,28 +215,57 @@ def run_get_current_tenders(args: argparse.Namespace) -> bool:
                 .upsert(db._prepare_tender_data(row), on_conflict="resource_id", ignore_duplicates=True)\
                 .execute()
         except Exception as e:
-            logger.warning(f"[{i+1}] contract_analysis insert failed for {row.get('resource_id')}: {e}")
+            logger.warning(f"[{i+1}] contract_analysis insert failed for {rid}: {e}")
 
     print(f"Done: {pushed}/{len(records)} listings -> {settings.SUPABASE_TABLE_TENDERS_CURRENT}")
-    print(f"      (also upserted into {settings.SUPABASE_TABLE_CONTRACT_ANALYSIS})")
+
+    # Prune contract_analysis to match tenders_current exactly — remove any rows
+    # whose tender is no longer in the active scrape window.
+    if current_resource_ids:
+        try:
+            db.supabase.table(settings.SUPABASE_TABLE_CONTRACT_ANALYSIS)\
+                .delete()\
+                .not_in_("resource_id", current_resource_ids)\
+                .execute()
+            print(f"      (contract_analysis synced to {len(current_resource_ids)} current tenders)")
+        except Exception as e:
+            logger.warning(f"Could not prune contract_analysis: {e}")
 
     # Mark already-analysed tenders as detail_page_extracted=true in gojep_tenders_current
     # so get-tender-details, get-tender-documents, and extract-document-text skip them.
-    # A tender is confirmed processed only if BOTH resource_id AND competition_unique_id
-    # match an existing entry in gojep_analysis_results.
     try:
+        # Step 1: restore competition_unique_id from contract_analysis into tenders_current.
+        # The listing scrape sets competition_unique_id=NULL on every fresh insert; the detail
+        # value is preserved in contract_analysis from prior runs (ignore_duplicates upsert).
+        ca_rows = db.supabase.table(settings.SUPABASE_TABLE_CONTRACT_ANALYSIS)\
+            .select("resource_id,competition_unique_id")\
+            .in_("resource_id", current_resource_ids)\
+            .execute().data or []
+
+        for ca in ca_rows:
+            rid = ca.get("resource_id")
+            uid = ca.get("competition_unique_id")
+            if rid and uid:
+                try:
+                    db.supabase.table(settings.SUPABASE_TABLE_TENDERS_CURRENT)\
+                        .update({"competition_unique_id": uid})\
+                        .eq("resource_id", rid)\
+                        .execute()
+                except Exception as e:
+                    logger.warning(f"Could not restore competition_unique_id for {rid}: {e}")
+
+        # Step 2: cross-check against analysis_results — both keys must match so a
+        # re-tendered competition (same resource_id, new competition_unique_id) is re-processed.
         analysed_rows = db.supabase.table(settings.SUPABASE_TABLE_ANALYSIS_RESULTS)\
             .select("resource_id,competition_unique_id")\
             .execute().data or []
 
-        # Build lookup: resource_id -> competition_unique_id for all analysed tenders
         analysed = {
             r["resource_id"]: r["competition_unique_id"]
             for r in analysed_rows
             if r.get("resource_id") and r.get("competition_unique_id")
         }
 
-        # Fetch current tenders to cross-check both keys
         current_rows = db.supabase.table(settings.SUPABASE_TABLE_TENDERS_CURRENT)\
             .select("resource_id,competition_unique_id")\
             .execute().data or []
@@ -133,7 +276,6 @@ def run_get_current_tenders(args: argparse.Namespace) -> bool:
             uid = row.get("competition_unique_id")
             if not rid or not uid:
                 continue
-            # Both resource_id and competition_unique_id must match
             if analysed.get(rid) == uid:
                 try:
                     db.supabase.table(settings.SUPABASE_TABLE_TENDERS_CURRENT)\
@@ -146,6 +288,17 @@ def run_get_current_tenders(args: argparse.Namespace) -> bool:
 
         new_count = len(current_rows) - skipped
         print(f"      ({skipped} previously analysed — will skip | {new_count} new — will process)")
+
+        # Prune analysis_results to current tenders only
+        if current_resource_ids:
+            try:
+                db.supabase.table(settings.SUPABASE_TABLE_ANALYSIS_RESULTS)\
+                    .delete()\
+                    .not_in_("resource_id", current_resource_ids)\
+                    .execute()
+            except Exception as e:
+                logger.warning(f"Could not prune analysis_results: {e}")
+
     except Exception as e:
         logger.warning(f"Could not mark already-analysed tenders: {e}")
 
@@ -158,7 +311,7 @@ def run_get_tender_details(args: argparse.Namespace) -> bool:
     """Fetch detail pages for DB records that don't have them yet.
     Uses browser with login + CAPTCHA handling."""
     from modules.tenders.get_tender_details import TenderDetailExtractor
-    from db.tender_row_mapping import fields_to_tender_patch
+    from db.tenders.tender_row_mapping import fields_to_tender_patch
 
     db = SupabaseClient()
     table = getattr(args, "table", settings.SUPABASE_TABLE_TENDERS_ALL)
@@ -208,9 +361,7 @@ def run_get_tender_details(args: argparse.Namespace) -> bool:
 
 def run_get_tender_documents(args: argparse.Namespace) -> bool:
     """Download ZIP documents for tenders in gojep_tenders_current."""
-    import json
     import tempfile
-    import os
     from modules.tenders.get_tender_documents import run_downloads
 
     json_path = getattr(args, "json_file", None)
@@ -305,14 +456,59 @@ def run_extract_document_text(args: argparse.Namespace) -> bool:
     return processed > 0 or errors == 0
 
 
+# ── Sync analysis tables --------------------------------------------------
+
+def run_sync_analysis_tables(_args) -> bool:
+    """
+    Prune gojep_contract_analysis and gojep_analysis_results so they contain
+    only tenders currently in gojep_tenders_current. No scraping — reads the
+    DB as-is and deletes stale rows.
+    """
+    db = SupabaseClient()
+
+    try:
+        rows = db.supabase.table(settings.SUPABASE_TABLE_TENDERS_CURRENT)\
+            .select("resource_id")\
+            .execute().data or []
+    except Exception as e:
+        print(f"Failed to fetch tenders_current: {e}")
+        return False
+
+    current_ids = [r["resource_id"] for r in rows if r.get("resource_id")]
+    if not current_ids:
+        print("gojep_tenders_current is empty — aborting to avoid wiping analysis tables.")
+        return False
+
+    print(f"gojep_tenders_current has {len(current_ids)} tenders.")
+
+    for table in (settings.SUPABASE_TABLE_CONTRACT_ANALYSIS, settings.SUPABASE_TABLE_ANALYSIS_RESULTS):
+        try:
+            db.supabase.table(table)\
+                .delete()\
+                .not_in_("resource_id", current_ids)\
+                .execute()
+            print(f"  {table}: pruned to {len(current_ids)} tenders.")
+        except Exception as e:
+            print(f"  {table}: prune failed — {e}")
+
+    return True
+
+
 # ── Orchestrator -----------------------------------------------------------
+
+def run_cleanup_expired(_args=None) -> bool:
+    """Delete expired tenders from gojep_tenders_current."""
+    from tools.cleanup_expired import run_cleanup
+    return run_cleanup()
+
 
 def run_pipeline(_args) -> bool:
     """
     Run the full tender scraping pipeline end-to-end:
-      1. get-current-tenders  — scrape active listings (48h horizon)
-      2. get-tender-details   — fetch detail pages for each listing
-      3. get-tender-documents — download ZIP documents for each tender
+      1. cleanup-expired      — remove expired tenders from gojep_tenders_current
+      2. get-current-tenders  — scrape active listings (48h horizon)
+      3. get-tender-details   — fetch detail pages for each listing
+      4. get-tender-documents — download ZIP documents for each tender
     Document extraction and LLM analysis are handled separately via
     'colab-pipeline' (tools/colab/extract.py + analyse.py).
     """
@@ -321,12 +517,15 @@ def run_pipeline(_args) -> bool:
     from cli.analysis import run_analysis_pipeline
 
     steps = [
-        ("get-current-tenders",  run_get_current_tenders,  types.SimpleNamespace()),
-        ("get-tender-details",   run_get_tender_details,   types.SimpleNamespace(
+        ("cleanup-expired",           run_cleanup_expired,               types.SimpleNamespace()),
+        ("get-current-tenders",       run_get_current_tenders,          types.SimpleNamespace()),
+        ("prune-documents",           prune_documents_to_current_listing, types.SimpleNamespace()),
+        ("get-tender-details",        run_get_tender_details,            types.SimpleNamespace(
             table=settings.SUPABASE_TABLE_TENDERS_CURRENT, limit=200)),
-        ("get-tender-documents", run_get_tender_documents, types.SimpleNamespace(
+        ("get-tender-documents",      run_get_tender_documents,          types.SimpleNamespace(
             json_file=None, resume=True)),
-        ("run-analysis",         run_analysis_pipeline,    types.SimpleNamespace(
+        ("verify-documents",          verify_documents_integrity,        types.SimpleNamespace()),
+        ("run-analysis",              run_analysis_pipeline,             types.SimpleNamespace(
             skip_extract=False, skip_analyse=False)),
     ]
 
@@ -382,6 +581,27 @@ def create_tenders_parser(subparsers) -> None:
     # 5. extract-document-text
     p5 = subparsers.add_parser("extract-document-text", help="Step 5: Extract text from downloaded documents")
     p5.set_defaults(func=run_extract_document_text)
+
+    # prune-documents
+    p_prune = subparsers.add_parser(
+        "prune-documents",
+        help="Remove document folders for tenders not in gojep_tenders_current",
+    )
+    p_prune.set_defaults(func=prune_documents_to_current_listing)
+
+    # verify-documents
+    p_verify = subparsers.add_parser(
+        "verify-documents",
+        help="Verify document folders exactly match gojep_tenders_current",
+    )
+    p_verify.set_defaults(func=verify_documents_integrity)
+
+    # sync-analysis-tables
+    p_sync = subparsers.add_parser(
+        "sync-analysis-tables",
+        help="Prune contract_analysis and analysis_results to match tenders_current (no scraping)",
+    )
+    p_sync.set_defaults(func=run_sync_analysis_tables)
 
     # Add --sync to all
     for p in [p1, p2, p3, p4, p5]:

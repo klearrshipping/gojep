@@ -152,16 +152,23 @@ def init_docling():
     import torch
     from docling.document_converter import DocumentConverter, PdfFormatOption
     from docling.datamodel.base_models import InputFormat
-    from docling.datamodel.pipeline_options import PdfPipelineOptions
+    from docling.datamodel.pipeline_options import (
+        PdfPipelineOptions,
+        TableStructureOptions,
+        TableFormerMode,
+    )
     from docling.datamodel.accelerator_options import AcceleratorOptions, AcceleratorDevice
 
     print(f"CUDA available: {torch.cuda.is_available()}")
 
     accelerator = AcceleratorOptions(device=AcceleratorDevice.AUTO)
+
+    # Full layout pipeline: accurate TableFormer mode + OCR for scanned/image PDFs
     pdf_opts = PdfPipelineOptions()
     pdf_opts.accelerator_options = accelerator
-    pdf_opts.do_ocr = False
+    pdf_opts.do_ocr = True                   # handles scanned + image-based PDFs
     pdf_opts.do_table_structure = True
+    pdf_opts.table_structure_options = TableStructureOptions(mode=TableFormerMode.ACCURATE)
     pdf_opts.do_picture_classification = False
     pdf_opts.do_picture_description = False
 

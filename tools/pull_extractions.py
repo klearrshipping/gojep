@@ -16,7 +16,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from config import settings as config
-from db.supabase_client import SupabaseClient
+from db.client.supabase_client import SupabaseClient
 
 logger = logging.getLogger(__name__)
 
