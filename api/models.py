@@ -115,6 +115,7 @@ class TenderDetail(BaseModel):
 
     # Analysis metadata
     suitability_summary: Optional[str] = None
+    narrative_analysis: Optional[str] = None
     analysis_timestamp: Optional[str] = None
     has_analysis: bool = False
 

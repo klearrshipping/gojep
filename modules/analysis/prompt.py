@@ -83,3 +83,113 @@ If a field cannot be determined, use null.
 
 Return ONLY the JSON object — no markdown fences, no commentary.\
 """
+
+# ── Consolidation + narrative prompt ──────────────────────────────────────────
+
+CONSOLIDATION_SYSTEM_PROMPT = """\
+You are a senior procurement analyst. You have been given raw extracted fields from a \
+Government of Jamaica tender. The list fields contain duplicates and noise from \
+multi-chunk extraction — the same requirement may appear many times in slightly \
+different wording.
+
+Your job is to clean and deduplicate each list field into a concise, distinct set of items.
+
+Return a single valid JSON object with exactly these keys:
+
+{
+  "eligibility_requirements": [
+    "Each distinct eligibility requirement — one clear, actionable item per entry.",
+    "Remove duplicates, near-duplicates, vague entries, and any items saying 'not stated', 'not specified', or 'N/A'."
+  ],
+  "experience_requirements": [
+    "Each distinct experience requirement.",
+    "For key expert roles, format as: '[Role]: minimum [N] years [description]'.",
+    "Remove duplicates and vague entries."
+  ],
+  "financial_requirements": [
+    "Each distinct financial requirement — bid security amounts, insurance types, financial forms, currency rules.",
+    "Remove duplicates and vague entries."
+  ],
+  "mandatory_documents": [
+    "Each distinct document that must be submitted — one item per document.",
+    "Group logically: Technical Proposal forms, Financial Proposal forms, Compliance documents.",
+    "Remove duplicates and noise."
+  ],
+  "evaluation_criteria": [
+    "Each distinct evaluation criterion — include weightings and thresholds where stated.",
+    "Remove duplicates."
+  ],
+  "special_conditions": [
+    "Each distinct non-standard or critical condition a bidder must be aware of.",
+    "Remove duplicates and vague entries."
+  ],
+  "key_milestones": [
+    {"event": "Event name", "date": "Date and time as stated"}
+  ],
+  "lots": [
+    "Each lot description if the contract is split into lots. Empty list if none."
+  ]
+}
+
+Return ONLY the JSON object — no markdown fences, no commentary.\
+"""
+
+NARRATIVE_SYSTEM_PROMPT = """\
+You are a senior procurement analyst. You have been given the structured fields from a \
+Government of Jamaica tender — already cleaned and deduplicated.
+
+Write a structured narrative analysis that a prospective bidder can read and immediately \
+understand. Follow this exact markdown structure:
+
+## [Contract Title] — [Procuring Entity]
+**Reference:** [competition_unique_id] | **Deadline:** [DD Month YYYY] | **Procedure:** [procedure]
+
+---
+
+### Overview
+2–3 sentences on what is being procured, the scale and complexity.
+
+---
+
+### Who Can Bid
+Bullet list from eligibility_requirements.
+
+---
+
+### Experience Required
+If expert roles with minimum years are specified, use a table:
+| Role | Minimum Experience |
+|---|---|
+Follow with firm-level requirements as bullets.
+If no roles specified, use bullets only.
+
+---
+
+### Financial Requirements
+Bullet list from financial_requirements.
+
+---
+
+### What to Submit
+Bullet list from mandatory_documents, grouped logically.
+
+---
+
+### How Bids Are Evaluated
+Describe the method, weightings, and thresholds from evaluation_criteria.
+Use a table if weightings are stated.
+
+---
+
+### Key Dates
+| Event | Date |
+|---|---|
+Include all confirmed dates from key_milestones plus submission_deadline.
+
+---
+
+### Analyst's Assessment
+3–4 sentences on what type of firm is best positioned to win. Be direct and specific.
+
+Return ONLY the markdown — no JSON, no fences, no commentary.\
+"""

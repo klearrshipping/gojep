@@ -40,7 +40,7 @@ from modules.analysis.prompt import (
 from modules.analysis.fetch import _fetch_db_metadata, DB_META_FIELDS
 from modules.analysis.chunk import build_chunk_contexts
 from modules.analysis.call import _call_llm
-from modules.analysis.parse import _parse_llm_response, _validate_parsed, _merge_parsed_results
+from modules.analysis.parse import _parse_llm_response, _validate_parsed, _merge_parsed_results, _consolidate
 
 logger = logging.getLogger(__name__)
 
@@ -152,12 +152,16 @@ def analyse_tender_folder(tender_folder: str, db=None, reanalyse: bool = False) 
         print(f"  -> WARN: {w}", flush=True)
         logger.warning(f"{folder_name}: {w}")
 
+    # 5. Consolidate + generate narrative
+    print(f"  -> Consolidating and generating narrative...", flush=True)
+    parsed, narrative_analysis = _consolidate(parsed, db_meta=db_meta)
+
     if "parse_error" in parsed and len(parsed) == 1:
         msg = parsed["parse_error"]
         _write_failure_marker(failed_marker_path, f"Parse error: {msg}")
         return False
 
-    # 5. Build result record
+    # 6. Build result record
     db_resource_id = db_meta.get("resource_id") if db_meta else None
     result: Dict[str, Any] = {
         "resource_id": db_resource_id or resource_id,
@@ -167,6 +171,7 @@ def analyse_tender_folder(tender_folder: str, db=None, reanalyse: bool = False) 
         "analysis_timestamp": datetime.now(timezone.utc).isoformat(),
         "raw_llm_response": raw_responses if num_chunks > 1 else raw_responses[0],
         "validation_warnings": warnings,
+        "narrative_analysis": narrative_analysis,
     }
     for field in ANALYSIS_OUTPUT_FIELDS:
         result[field] = parsed.get(field)
@@ -174,7 +179,7 @@ def analyse_tender_folder(tender_folder: str, db=None, reanalyse: bool = False) 
         for field in DB_META_FIELDS:
             result[f"db_{field}"] = db_meta.get(field)
 
-    # 6. Save local sidecar
+    # 7. Save local sidecar
     try:
         with open(sidecar_path, "w", encoding="utf-8") as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
@@ -182,7 +187,7 @@ def analyse_tender_folder(tender_folder: str, db=None, reanalyse: bool = False) 
         logger.error(f"Failed to save sidecar for {folder_name}: {e}")
         return False
 
-    # 7. Push to Supabase
+    # 8. Push to Supabase
     if db:
         try:
             db_row: Dict[str, Any] = {
@@ -192,6 +197,7 @@ def analyse_tender_folder(tender_folder: str, db=None, reanalyse: bool = False) 
                 "source_files": all_source_files,
                 "analysis_timestamp": result["analysis_timestamp"],
                 "raw_llm_response": raw_responses if num_chunks > 1 else raw_responses[0],
+                "narrative_analysis": narrative_analysis,
             }
             for field in ANALYSIS_OUTPUT_FIELDS:
                 val = result.get(field)

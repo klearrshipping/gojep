@@ -82,7 +82,7 @@ ANALYSIS_COLS = (
     "submission_deadline,eligibility_requirements,experience_requirements,"
     "financial_requirements,mandatory_documents,evaluation_criteria,"
     "key_milestones,lots,special_conditions,suitability_summary,"
-    "source_files,analysis_timestamp"
+    "narrative_analysis,source_files,analysis_timestamp"
 )
 
 
@@ -264,6 +264,7 @@ def _merge_to_detail(t: Dict, a: Optional[Dict]) -> TenderDetail:
         detail_url=t.get("detail_url"),
         source_files=(a or {}).get("source_files") or [],
         suitability_summary=(a or {}).get("suitability_summary"),
+        narrative_analysis=(a or {}).get("narrative_analysis"),
         analysis_timestamp=(a or {}).get("analysis_timestamp"),
         has_analysis=a is not None,
     )

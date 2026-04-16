@@ -13,13 +13,14 @@ from modules.analysis.prompt import ANALYSIS_SYSTEM_PROMPT, MAX_RETRIES, RETRY_B
 logger = logging.getLogger(__name__)
 
 
-def _call_llm(context: str) -> str:
+def _call_llm(context: str, system_prompt: str = None, max_tokens: int = 4000) -> str:
     """
     Send context to OpenRouter for LLM analysis.
+    Uses ANALYSIS_SYSTEM_PROMPT by default; pass system_prompt to override (e.g. consolidation).
     Retries on transient 5xx errors and 429 rate limits with exponential backoff.
     """
     messages = [
-        {"role": "system", "content": ANALYSIS_SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt or ANALYSIS_SYSTEM_PROMPT},
         {"role": "user", "content": context},
     ]
 
@@ -38,7 +39,7 @@ def _call_llm(context: str) -> str:
         "model": model_id,
         "messages": messages,
         "temperature": 0.1,
-        "max_tokens": 4000,
+        "max_tokens": max_tokens,
         "reasoning": {"enabled": True},
     }
     call_timeout = 120
